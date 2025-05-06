@@ -36,8 +36,15 @@ def is_possible_user_mention(token):
     return (token.isdigit() and len(token) >= 17) or re.fullmatch(r'[a-f0-9]{6,}', token)
 
 def is_username_with_id(token):
-    # Misal: ghost123456789012345678
-    return bool(re.fullmatch(r'[a-zA-Z]+[0-9]{6,}', token))
+    """
+    Cek apakah token adalah username yang mengandung angka panjang mencurigakan (ID),
+    biasanya kombinasi huruf dan angka >=6 digit.
+    """
+    # Harus ada huruf dan angka panjang
+    return bool(
+        re.search(r'[a-zA-Z]', token) and        # ada huruf
+        re.search(r'\d{6,}', token)              # ada angka panjang
+    )
 
 def is_non_latin(token):
     # Hilangkan kata dengan karakter non-Latin (CJK, Cyrillic, dll)
@@ -54,6 +61,17 @@ def clean_message(msg):
     if len(msg.strip()) < 10:
         return None
     return msg
+
+def is_random_alphanumeric(token):
+    # Deteksi string campuran huruf dan angka ≥10 karakter
+    return (
+        len(token) >= 10 and
+        any(c.isalpha() for c in token) and
+        any(c.isdigit() for c in token)
+    )
+
+def is_unknown_word(w):
+    return re.fullmatch(r'unknown_\d+', w) is not None
 
 # --- MAIN CLEANING FUNCTION ---
 
@@ -84,9 +102,9 @@ def clean_text(text):
     # Tokenisasi
     tokens = word_tokenize(text)
 
-    # Normalisasi angka
+    # Normalisasi angka (hindari angka absurd)
     def normalize_number(w):
-        if w.isdigit():
+        if w.isdigit() and len(w) <= 6:  # abaikan angka terlalu besar
             try:
                 return num2words(int(w))
             except Exception:
@@ -101,9 +119,15 @@ def clean_text(text):
         if w not in EN_STOPWORDS
         and not is_possible_user_mention(w)
         and not is_username_with_id(w)
+        and not is_random_alphanumeric(w)
+        and not is_unknown_word(w)
         and not is_non_latin(w)
         and w.strip() != ""
+        and len(w) <= 20
     ]
+
+    if len(cleaned) < 3:
+        return []
 
     return cleaned
 
