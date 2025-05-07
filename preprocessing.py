@@ -10,6 +10,7 @@ from nltk.corpus import stopwords
 from num2words import num2words
 import nltk
 import re
+from modules.utils import update_cleaned_status
 
 # --- INIT / DOWNLOAD ---
 try:
@@ -168,13 +169,24 @@ def stream_json_lines_from_large_blob(blob_path):
 
 # --- MAIN PIPELINE ---
 def process_and_save_cleaned_data(prefix):
+    # Load english data with cleaned status
+    english_data = load_english_file()
+    english_data_map = {entry['id']: entry for entry in english_data}
+    
     blobs = gcs_bucket.list_blobs(prefix=prefix)
+    processed_files = set()
+    
     for blob in blobs:
         filename = blob.name.split("/")[-1]
+        file_id = filename.replace(".json", "")
+        
+        # Skip if not in english datasets or already cleaned
         if filename not in english_filenames:
             continue
-
-        file_id = filename.replace(".json", "")
+        if english_data_map.get(file_id, {}).get('cleaned', False):
+            print(f"[SKIPPING] {filename} (already cleaned)")
+            continue
+            
         print(f"[PROCESSING] {filename}")
         grouped_by_year = {}
         total = 0
@@ -194,11 +206,33 @@ def process_and_save_cleaned_data(prefix):
             grouped_by_year.setdefault(year, []).append(" ".join(words))
             total += 1
 
+        # Save cleaned data
         for year, texts in grouped_by_year.items():
             write_cleaned_texts_to_gcs(file_id, year, texts)
-
+        
+        # Update cleaned status
+        for entry in english_data:
+            if entry['id'] == file_id:
+                entry['cleaned'] = True
+                break
+                
+        # Save updated english.json after each file
+        update_english_json(english_data)
+        processed_files.add(file_id)
+        
         print(f"[DONE] {filename} - {total} valid chats")
+
+def update_english_json(data):
+    """Update english.json in GCS"""
+    blob = gcs_bucket.blob("additional/english.json")
+    blob.upload_from_string(
+        json.dumps(data, indent=2, ensure_ascii=False),
+        content_type="application/json"
+    )
+    print("[UPDATED] english.json with new cleaned statuses")
+
 
 # --- RUN ---
 if __name__ == "__main__":
+    update_cleaned_status()
     process_and_save_cleaned_data("datasets-v2/./")
