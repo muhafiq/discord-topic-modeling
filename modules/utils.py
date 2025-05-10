@@ -38,3 +38,20 @@ def update_cleaned_status():
     
     print(f"\nUpdated {updated_count} records")
     print(f"Total cleaned files: {sum(item.get('cleaned', False) for item in english_data)}/{len(english_data)}")
+
+def reset_english_file_cleaning_status():
+    # 1. Load english.json dari GCS
+    blob = gcs_bucket.blob("additional/english.json")
+    english_data = json.loads(blob.download_as_text(encoding="utf-8"))
+
+    # 2. Set cleaned = False untuk semua entri
+    for item in english_data:
+        item['cleaned'] = False
+
+    # 3. Upload kembali ke GCS
+    blob.upload_from_string(
+        json.dumps(english_data, indent=2, ensure_ascii=False),
+        content_type="application/json; charset=utf-8"
+    )
+
+    print(f"Reset {len(english_data)} records: cleaned = False")
