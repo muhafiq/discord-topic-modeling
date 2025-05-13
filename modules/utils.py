@@ -11,13 +11,13 @@ def load_english_file():
     data = json.loads(content)
     return data;
 
-def update_cleaned_status():
+def update_cleaned_status(prefix):
     # 1. Load english.json
     blob = gcs_bucket.blob("additional/english.json")
     english_data = json.loads(blob.download_as_text(encoding='utf-8'))
     
     # 2. List semua file yang sudah dibersihkan di GCS
-    cleaned_blobs = list(gcs_bucket.list_blobs(prefix="cleaned/"))
+    cleaned_blobs = list(gcs_bucket.list_blobs(prefix=prefix))
     cleaned_files = {blob.name.split("/")[-1] for blob in cleaned_blobs if not blob.name.endswith('/')}
     
     # 3. Update status cleaned

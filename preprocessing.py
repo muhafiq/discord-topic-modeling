@@ -6,12 +6,14 @@ import os
 import string
 from datetime import datetime
 from nltk.tokenize import word_tokenize
-from nltk.corpus import stopwords, words
+from nltk.corpus import stopwords, words, wordnet
 from nltk.stem import WordNetLemmatizer
 from num2words import num2words
 import nltk
 import re
 from langdetect import detect
+from tqdm import tqdm
+import contractions
 
 # --- INIT / DOWNLOAD ---
 try:
@@ -33,6 +35,11 @@ try:
     nltk.data.find('corpora/wordnet')
 except LookupError:
     nltk.download('wordnet')
+
+try:
+    nltk.data.find('taggers/averaged_perceptron_tagger')
+except LookupError:
+    nltk.download('averaged_perceptron_tagger')
 
 nltk.download('punkt_tab')
 
@@ -92,6 +99,18 @@ def is_clean_english_sentence(text, min_ratio=0.6):
     tokens = word_tokenize(text.lower())
     return english_word_ratio(tokens) >= min_ratio
 
+def get_wordnet_pos(tag):
+    if tag.startswith('J'):
+        return wordnet.ADJ
+    elif tag.startswith('V'):
+        return wordnet.VERB
+    elif tag.startswith('N'):
+        return wordnet.NOUN
+    elif tag.startswith('R'):
+        return wordnet.ADV
+    else:
+        return wordnet.NOUN
+
 # --- MAIN CLEANING FUNCTION ---
 def clean_text(text):
     text = re.sub(r'\x1b\[[0-9;]*m', '', text)
@@ -102,11 +121,9 @@ def clean_text(text):
     if not is_clean_english_sentence(cleaned_msg):
         return []
 
-    text = cleaned_msg.lower()
-    text = re.sub(r"\b(?:\w+n't|'re|'s|'d|'ll|'ve|'m)\b", lambda m: {
-        "n't": "not", "'re": "are", "'s": "is", "'d": "would",
-        "'ll": "will", "'ve": "have", "'m": "am"
-    }.get(m.group(0), m.group(0)), text)
+    # Perbaiki kontraksi (misalnya "hasn't" menjadi "has not", "I'm" menjadi "I am")
+    text = contractions.fix(cleaned_msg)
+    text = text.lower()
 
     text = text.translate(PUNCTUATION_TABLE)
     text = re.sub(r'\b(?:https?|cdn|media|tenor|discord|twitter|attachments)[^\s]*', '', text)
@@ -163,17 +180,30 @@ def stream_json_lines_from_large_blob(blob_path):
     blob = gcs_bucket.blob(blob_path)
     tmp_file = tempfile.NamedTemporaryFile(mode="w+b", delete=False)
     try:
-        print(f"[DOWNLOADING] {blob_path} to {tmp_file.name}")
-        blob.download_to_file(tmp_file)
-        tmp_file.seek(0)
+        total_size = blob.size or 0
+        print(f"[DOWNLOADING] {blob_path} to {tmp_file.name} ({total_size} bytes)")
 
-        for line in tmp_file:
-            try:
-                line = line.decode("utf-8").strip()
-                if line:
-                    yield json.loads(line)
-            except Exception:
-                continue
+        # Manual download with progress
+        with open(tmp_file.name, "wb") as f:
+            with blob.open("rb") as reader:
+                with tqdm(total=total_size, unit="B", unit_scale=True, desc="Downloading", ncols=80) as pbar:
+                    chunk_size = 1024 * 1024  # 1 MB
+                    while True:
+                        chunk = reader.read(chunk_size)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        pbar.update(len(chunk))
+
+        # Read JSON lines
+        with open(tmp_file.name, "rb") as f:
+            for line in f:
+                try:
+                    line = line.decode("utf-8").strip()
+                    if line:
+                        yield json.loads(line)
+                except Exception:
+                    continue
     finally:
         tmp_file.close()
         os.remove(tmp_file.name)
@@ -210,6 +240,8 @@ def process_and_save_cleaned_data(prefix):
             words = clean_text(content)
             if not words:
                 continue
+            
+            print(f"MSG: {content[:60]!r} → {words}")
 
             year = extract_year(msg.get("timestamp", ""))
             grouped_by_year.setdefault(year, []).append(" ".join(words))
@@ -238,5 +270,5 @@ def update_english_json(data):
 
 # --- RUN ---
 if __name__ == "__main__":
-    # update_cleaned_status()
+    update_cleaned_status("/cleaned-v2")
     process_and_save_cleaned_data("datasets-v2/./")
